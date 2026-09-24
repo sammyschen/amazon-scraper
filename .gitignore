@@ -1,0 +1,11 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Scraped data stays local
+output/
+
+# macOS / Excel clutter
+.DS_Store
+~$*
