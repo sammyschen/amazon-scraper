@@ -31,6 +31,7 @@ Every run saves an `.xlsx` workbook, plus an optional `.csv`. Each workbook has 
 - [Project structure](#project-structure)
 - [Known limitations](#known-limitations)
 - [Responsible use](#responsible-use)
+- [License](#license)
 
 ---
 
@@ -287,3 +288,9 @@ Amazon's Conditions of Use don't allow automated data collection. Use this tool 
 - don't run many copies at once,
 - don't log in with your Amazon account while scraping,
 - don't republish the data commercially.
+
+## License
+
+[MIT](LICENSE) © 2026 Sammy Chen. You're free to use, copy, modify and share this code, including in your own projects, as long as you keep the copyright notice. It comes with no warranty.
+
+Found a bug, or has Amazon changed a page? [Open an issue](https://github.com/sammyschen/amazon-uk-scraper/issues). Pull requests are welcome.
