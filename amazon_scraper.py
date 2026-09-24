@@ -1,5 +1,5 @@
 """
-Amazon UK scraper -> Excel (.xlsx) / CSV.  Three ways to pick the products:
+Amazon US (amazon.com) scraper -> Excel (.xlsx) / CSV.  Three ways to pick the products:
 
   Keyword      amazon macbook -n 500              search results, read from the result cards
   ASIN Family  amazon asin B0CG19QXWD             every child/variation under the same parent
@@ -7,16 +7,17 @@ Amazon UK scraper -> Excel (.xlsx) / CSV.  Three ways to pick the products:
 
 ASIN Family and Ranking open each product's own page (scraper/product.py). All modes
 write the same workbook: a Products sheet (same 24 columns) and an Info sheet.
+Every run delivers to ZIP 10010 and records prices in USD (see scraper/config.py).
 
 More examples (with the `amazon` shell alias; otherwise use
 `.venv/bin/python amazon_scraper.py` from this folder):
     amazon                               # asks what to scrape
     amazon macbook --500                 # same as -n 500
     amazon dji mini 4 pro -n 200 --csv --open
-    amazon --url "https://www.amazon.co.uk/s?k=dji&rh=..." -n 300
-    amazon asin B0G3JL134C -n 20         # a big family: only the first 20 children
-    amazon --asin https://www.amazon.co.uk/dp/B0CG19QXWD
-    amazon --ranking "https://www.amazon.co.uk/gp/bestsellers/electronics" -n 50
+    amazon --url "https://www.amazon.com/s?k=dji&rh=..." -n 300
+    amazon asin B0GS9Y71FP -n 20         # a big family: only the first 20 children
+    amazon --asin https://www.amazon.com/dp/B0CG19QXWD
+    amazon --ranking "https://www.amazon.com/gp/bestsellers/electronics" -n 50
 
 Output goes to ./output/ next to this script. Open the .xlsx in Excel, or in
 Google Sheets use File > Import > Upload.
@@ -32,6 +33,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from scraper.asin_family import discover_asin_family
 from scraper.browser import Blocked, Browser
+from scraper.config import AMAZON_DOMAIN, CURRENCY, DELIVERY_ZIP, MARKETPLACE
 from scraper.export import export_results
 from scraper.product import ProductError, scrape_products
 from scraper.ranking import RankingError, get_ranked_products
@@ -45,6 +47,7 @@ SECONDS_PER_PRODUCT = 10
 RANKING_URL_RE = re.compile(
     r"/(zgbs|gp/bestsellers|gp/new-releases|gp/movers-and-shakers|gp/most-wished-for|gp/most-gifted)"
     r"|/(Best-Sellers|bestsellers|new-releases|movers-and-shakers|most-wished-for|most-gifted)", re.I)
+MARKETPLACE_URL_RE = re.compile(r"https?://(www\.)?%s/" % re.escape(AMAZON_DOMAIN), re.I)
 
 
 def now():
@@ -76,6 +79,18 @@ def failed_summary(failures):
     return f"{len(failures)} - " + "; ".join(f"{a} ({reason})" for a, reason in failures)
 
 
+def marketplace_info(browser):
+    """The Info sheet's marketplace block, with the delivery location Amazon actually showed."""
+    return {
+        "Marketplace": MARKETPLACE,
+        "Domain": AMAZON_DOMAIN,
+        "Delivery ZIP": DELIVERY_ZIP if browser.zip_applied
+        else f"{DELIVERY_ZIP} - NOT applied (see Delivery location)",
+        "Currency": CURRENCY,
+        "Delivery location": browser.location or "unknown",
+    }
+
+
 def print_totals(requested, rows, failures):
     print(f"\nTotal requested: {requested}\nSuccessful: {len(rows)}\nFailed: {len(failures)}")
     for asin, reason in failures:
@@ -87,7 +102,7 @@ def print_totals(requested, rows, failures):
 def run_keyword(browser, args):
     url = args.url or f"{BASE}/s?k={quote_plus(args.keyword)}"
     search = args.keyword or parse_qs(urlparse(url).query).get("k", ["search"])[0]
-    print(f'Mode: Keyword\n\nCollecting {args.count} products for "{search}" from amazon.co.uk ...\n')
+    print(f'Mode: Keyword\n\nCollecting {args.count} products for "{search}" from {AMAZON_DOMAIN} ...\n')
 
     rows, note = scrape_search(browser, url, args.count)
     print(f"\n{note}")
@@ -213,16 +228,17 @@ def parse_args():
 
     ap = argparse.ArgumentParser(
         prog="amazon",
-        description="Scrape Amazon UK products into Excel - by keyword, ASIN family or ranking page.",
+        description=f"Scrape {MARKETPLACE} ({AMAZON_DOMAIN}) products into Excel - by keyword, "
+                    f"ASIN family or ranking page. Delivery ZIP {DELIVERY_ZIP}, prices in {CURRENCY}.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="examples:\n"
                "  amazon                          ask what to scrape\n"
                "  amazon macbook -n 500           500 MacBook search results (also: --500)\n"
                "  amazon dji mini 4 pro -n 200 --csv --open\n"
                "  amazon asin B0CG19QXWD          every variation of this product\n"
-               "  amazon asin B0G3JL134C -n 20    ...only the first 20 of a big family\n"
-               '  amazon ranking "https://www.amazon.co.uk/gp/bestsellers/electronics" 20\n'
-               '  amazon --url "https://www.amazon.co.uk/s?k=..." -n 300',
+               "  amazon asin B0GS9Y71FP -n 20    ...only the first 20 of a big family\n"
+               '  amazon ranking "https://www.amazon.com/gp/bestsellers/electronics" 20\n'
+               '  amazon --url "https://www.amazon.com/s?k=..." -n 300',
     )
     ap.add_argument("keyword", nargs="*", help="what to search for (several words are fine)")
     ap.add_argument("-n", "--count", type=int,
@@ -230,7 +246,7 @@ def parse_args():
                          f"{DEFAULT_RANKING}, ASIN family default all)")
     ap.add_argument("--asin", help="ASIN or product URL: scrape every child under its parent")
     ap.add_argument("--ranking", metavar="URL", help="ranking page (Best Sellers etc.): scrape the top N")
-    ap.add_argument("--url", help="a full amazon.co.uk search URL instead of a keyword (keeps its filters)")
+    ap.add_argument("--url", help=f"a full {AMAZON_DOMAIN} search URL instead of a keyword (keeps its filters)")
     ap.add_argument("--csv", action="store_true", help="also write a .csv next to the .xlsx")
     ap.add_argument("--open", action="store_true", help="open the spreadsheet when finished")
     ap.add_argument("--show-browser", action="store_true", help="show Chrome (needed to solve a CAPTCHA)")
@@ -260,7 +276,7 @@ def parse_args():
         try:
             value = ""
             while not value:
-                value = input("Search Amazon UK for (keyword, ASIN or ranking URL): ").strip()
+                value = input(f"Search {MARKETPLACE} for (keyword, ASIN or ranking URL): ").strip()
             args.mode, value = detect_mode(value)
             if args.mode != "asin" and args.count is None:
                 default = DEFAULT_RANKING if args.mode == "ranking" else DEFAULT_COUNT
@@ -274,9 +290,9 @@ def parse_args():
         args.asin = parse_asin(value)
         if not args.asin:
             ap.error(f"'{value}' is not a valid ASIN (10 characters, e.g. B0CG19QXWD) or product URL")
+    elif args.mode in ("ranking", "url") and not MARKETPLACE_URL_RE.match(value):
+        ap.error(f"the page must be on {AMAZON_DOMAIN} (https://www.{AMAZON_DOMAIN}/...)")
     elif args.mode == "ranking":
-        if not re.match(r"https?://(www\.)?amazon\.co\.uk/", value):
-            ap.error("the ranking page must be an https://www.amazon.co.uk/... URL")
         args.ranking = value
         args.count = args.count or DEFAULT_RANKING
     else:
@@ -295,6 +311,7 @@ def main():
     try:
         with Browser(show=args.show_browser) as browser:
             rows, info, stem = run(browser, args)
+            info = {**marketplace_info(browser), **info}
     except KeyboardInterrupt:
         sys.exit("\nCancelled.")
     except (ProductError, RankingError, Blocked) as e:  # discovery failed: nothing to save

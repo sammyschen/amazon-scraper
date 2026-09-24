@@ -8,10 +8,13 @@ import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from .config import LIST_PRICE_COL, PRICE_COL, PRICE_FORMAT
+
 # The approved Products schema - do not rename, reorder or insert columns.
+# The two price columns are named after the marketplace currency (price_usd, list_price_usd).
 COLUMNS = [
     "rank", "asin", "brand", "title", "subtitle", "condition",
-    "price_gbp", "list_price_gbp", "list_price_type", "discount_pct",
+    PRICE_COL, LIST_PRICE_COL, "list_price_type", "discount_pct",
     "rating", "ratings_count", "bought_past_month", "stock", "badge", "deal",
     "advertised", "delivery", "other_offers", "found_via", "page",
     "url", "image_url", "scraped_at",
@@ -44,8 +47,8 @@ def export_results(results, metadata, path, csv=False):
             col = get_column_letter(idx)
             ws.column_dimensions[col].width = WIDTHS.get(name, max(12, len(name) + 2))
             for cell in ws[col][1:]:
-                if name in ("price_gbp", "list_price_gbp"):
-                    cell.number_format = "£#,##0.00"
+                if name in (PRICE_COL, LIST_PRICE_COL):
+                    cell.number_format = PRICE_FORMAT
                 elif name == "ratings_count":
                     cell.number_format = "#,##0"
                 elif name == "url" and cell.value:

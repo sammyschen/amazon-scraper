@@ -15,7 +15,8 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import Error as PlaywrightError
 
 from .browser import Blocked
-from .utils import BASE, full_size_image, product_url, text, to_count, to_money
+from .config import LIST_PRICE_COL, PRICE_COL
+from .utils import BASE, full_size_image, list_price_label, product_url, text, to_count, to_price
 
 RESULT_SELECTOR = 'div[data-component-type="s-search-result"]'
 # Amazon's sort orders, in the order they are tried when more products are needed.
@@ -54,12 +55,11 @@ def parse_card(card):
     list_type = ""
     if price_box:
         current = price_box.select_one(".a-price:not(.a-text-price) .a-offscreen")
-        price = to_money(text(current))
+        price = to_price(text(current))
         struck = price_box.select_one(".a-price.a-text-price")
         if struck:
-            list_price = to_money(text(struck.select_one(".a-offscreen")))
-            label = text(struck.parent)
-            list_type = "RRP" if "RRP" in label else "Was" if "Was" in label else ""
+            list_price = to_price(text(struck.select_one(".a-offscreen")))
+            list_type = list_price_label(text(struck.parent))
     discount = (
         round((1 - price / list_price) * 100, 1)
         if price and list_price and list_price > price else None
@@ -81,26 +81,35 @@ def parse_card(card):
         card_text,
     )
 
+    badge = card.select_one(
+        "[data-component-type='s-status-badge-component'], .puis-status-badge-container")
+    if badge:
+        for popover in badge.select(".a-popover-preload"):  # hidden "what this badge means" text
+            popover.decompose()
+
+    delivery = text(card.select_one(".udm-primary-delivery-message"))
+    if delivery.startswith("Join Prime"):  # a Prime sign-up prompt: use the non-member line
+        non_member = text(card.select_one(".udm-secondary-delivery-message"))
+        delivery = re.sub(r"^Or\s+Non-members get\s+", "", non_member) or delivery
+
     return {
         "asin": asin,
         "brand": brand,
         "title": title,
         "subtitle": text(card.select_one(".title-differentiators")),
         "condition": "Renewed" if re.search(r"\b(Renewed|Refurbished)\b", f"{brand} {title}") else "New",
-        "price_gbp": price,
-        "list_price_gbp": list_price,
+        PRICE_COL: price,
+        LIST_PRICE_COL: list_price,
         "list_price_type": list_type,
         "discount_pct": discount,
         "rating": rating,
         "ratings_count": ratings_count,
         "bought_past_month": bought,
         "stock": stock.group() if stock else "",
-        "badge": text(card.select_one(
-            "[data-component-type='s-status-badge-component'], .puis-status-badge-container"
-        )),
+        "badge": text(badge),
         "deal": "Limited time deal" if "Limited time deal" in text(price_box) else "",
         "advertised": bool(card.select_one(".puis-sponsored-label-text")),
-        "delivery": text(card.select_one(".udm-primary-delivery-message")),
+        "delivery": delivery,
         "other_offers": text(card.select_one('[data-cy="secondary-offer-recipe"]')),
         "url": product_url(asin),
         "image_url": full_size_image(img.get("src", "")) if img else "",

@@ -1,6 +1,6 @@
 """
 Amazon's variation ("twister") data, embedded as JSON in every product page that
-has variations. Verified on amazon.co.uk (Sept 2026), e.g.:
+has variations. Same format on amazon.com and amazon.co.uk (verified Sept 2026), e.g.:
 
     "currentAsin" : "B0CG19QXWD",
     "parentAsin" : "B0HC6NY128",

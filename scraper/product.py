@@ -16,7 +16,8 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import Error as PlaywrightError
 
 from .browser import Blocked
-from .utils import BASE, full_size_image, product_url, text, to_count, to_money
+from .config import CURRENCY_SYMBOL, LIST_PRICE_COL, PRICE_COL
+from .utils import BASE, full_size_image, list_price_label, product_url, text, to_count, to_price
 from .variations import page_asin, variation_of
 
 PRODUCT_READY = "#productTitle"
@@ -52,11 +53,12 @@ def load_product_page(browser, asin):
     the page won't load after retries, Blocked on a CAPTCHA."""
     url = f"{BASE}/dp/{asin}?th=1&psc=1"  # th/psc: show exactly this variation
     problem = "page did not load"
-    for _ in range(ATTEMPTS):
+    for attempt in range(ATTEMPTS):
         try:
-            # A session that has already viewed a product page gets later product pages
-            # without their content (title, price...), so each one starts cookie-free.
-            browser.clear_cookies()
+            # The session (and its delivery ZIP) is kept between product pages. If a page
+            # comes back empty, retry from the cookies saved right after the ZIP was set.
+            if attempt:
+                browser.restore_session()
             if browser.load(url, PRODUCT_READY, timeout=15_000):
                 return browser.html()
         except PlaywrightError as e:  # network hiccup; a closed browser can't be retried
@@ -66,20 +68,25 @@ def load_product_page(browser, asin):
             continue
         if browser.status == 404:
             raise ProductError("product does not exist (page not found)")
+        if browser.status == 200 and 'id="dp"' not in browser.html():
+            # e.g. a subscription plan: loads fine but has no standard product layout
+            raise ProductError("not a standard product page (e.g. a subscription or digital service)")
     raise ProductError(f"{problem} after {ATTEMPTS} attempts")
 
 
 # ---------------------------------------------------------------- parsing ---
 
 def _price(el):
-    """Price of an .a-price element: its hidden '£1,299.00' text, else the visible parts."""
+    """Price of an .a-price element: its hidden '$1,299.00' text, else the visible parts.
+    None if the price isn't in the marketplace currency."""
     if not el:
         return None
-    price = to_money(text(el.select_one(".a-offscreen")))
+    price = to_price(text(el.select_one(".a-offscreen")))
     if price is None:
+        symbol = text(el.select_one(".a-price-symbol"))
         whole = re.sub(r"[^\d,]", "", text(el.select_one(".a-price-whole")))
         frac = re.sub(r"\D", "", text(el.select_one(".a-price-fraction")))
-        price = to_money(f"{whole}.{frac}" if whole and frac else whole)
+        price = to_price(f"{symbol}{whole}.{frac}" if whole and frac else f"{symbol}{whole}")
     return price
 
 
@@ -107,13 +114,10 @@ def parse_product_page(html, asin):
 
     price, _ = _first(soup, PRICE_SELECTORS, _price)
     if price is None:
-        price = to_money(text(soup.select_one(OLD_PRICE_IDS)))
+        price = to_price(text(soup.select_one(OLD_PRICE_IDS)))
     list_price, list_el = _first(soup, LIST_PRICE_SELECTORS,
-                                 lambda el: to_money(text(el.select_one(".a-offscreen") or el)))
-    list_type = ""
-    if list_el:
-        label = text(list_el) + " " + text(list_el.parent)
-        list_type = next((t for t in ("RRP", "Was", "Typical", "List Price") if t in label), "")
+                                 lambda el: to_price(text(el.select_one(".a-offscreen") or el)))
+    list_type = list_price_label(text(list_el) + " " + text(list_el.parent)) if list_el else ""
     if not (price and list_price and list_price > price):
         list_price, list_type = None, ""
     discount = round((1 - price / list_price) * 100, 1) if list_price else None
@@ -133,11 +137,12 @@ def parse_product_page(html, asin):
 
     delivery = text(soup.select_one("#mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE")) \
         or text(soup.select_one("#deliveryBlockMessage"))
-    delivery = re.split(r"\s*(?:Or fastest delivery|Details|Order within)", delivery)[0].strip(" .")
+    delivery = re.split(r"\s*(?:\bOr\s|Details|Order within)", delivery)[0].strip(" .")
 
     offers_text = " ".join(text(e) for e in soup.select(
         "#olpLinkWidget_feature_div, #buybox-see-all-buying-choices, #usedAccordionRow"))
-    offers = re.search(r"(?:New & Used|New|Used)\s*\(\d+\)\s*from\s*£[\d,]+(?:\.\d+)?", offers_text)
+    offers = re.search(r"(?:New & Used|New|Used)\s*\(\d+\)\s*from\s*%s[\d,]+(?:\.\d+)?"
+                       % re.escape(CURRENCY_SYMBOL), offers_text)
 
     img = soup.select_one("#landingImage, #imgTagWrapperId img, #main-image, #imgBlkFront")
     image = (img.get("data-old-hires") or img.get("src") or "") if img else ""
@@ -150,8 +155,8 @@ def parse_product_page(html, asin):
         "title": title,
         "subtitle": variation,
         "condition": "Renewed" if re.search(r"\b(Renewed|Refurbished)\b", f"{brand} {title}") else "New",
-        "price_gbp": price,
-        "list_price_gbp": list_price,
+        PRICE_COL: price,
+        LIST_PRICE_COL: list_price,
         "list_price_type": list_type,
         "discount_pct": discount,
         "rating": float(rating.group(1)) if rating else None,
@@ -208,7 +213,7 @@ def scrape_products(browser, items, found_via, cached_pages=None, describe=None)
                        scraped_at=datetime.now().strftime("%Y-%m-%d %H:%M"))
             row["subtitle"] = row["subtitle"] or item.get("variation", "")
             rows.append(row)
-            price = f"£{row['price_gbp']:,.2f}" if row["price_gbp"] else "no price"
+            price = f"{CURRENCY_SYMBOL}{row[PRICE_COL]:,.2f}" if row[PRICE_COL] else "no price"
             print(f"{prefix} — ok: {price}  {row['title'][:60]}")
     except Blocked as e:
         note = str(e)

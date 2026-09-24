@@ -1,5 +1,6 @@
 """
-Amazon UK scraper package.
+Amazon scraper package. The marketplace (amazon.com, USD, delivery ZIP 10010) is
+set in config.py.
 
     Discovery layer      search.py (keyword), asin_family.py, ranking.py
           |                  -> a list of ASINs (+ rank / variation metadata)
